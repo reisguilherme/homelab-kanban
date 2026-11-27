@@ -1,0 +1,119 @@
+name: Kanban
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/**"
+      - "upstream/**"
+      - "kubernetes/**"
+      - "package*.json"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/kanban.yml"
+
+concurrency:
+  group: kanban-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_MCP: ghcr.io/reisguilherme/homelab-kanban-mcp
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install SOPS for encrypted manifests
+        if: hashFiles('secrets/*.sops.yaml') != ''
+        run: |
+          curl --fail --silent --show-error --location https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64 --output "$RUNNER_TEMP/sops"
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  $RUNNER_TEMP/sops" | sha256sum --check
+          sudo install --mode=0755 "$RUNNER_TEMP/sops" /usr/local/bin/sops
+      - run: node scripts/validate.mjs
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm audit --audit-level=high
+      - run: docker build --tag kanban-mcp:verify .
+      - name: Verify read-only kanban-mcp container
+        run: |
+          docker run -d --name kanban-mcp --read-only --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 --tmpfs /tmp:rw,noexec,nosuid,size=64m -e KANBAN_MCP_TOKENS_JSON='{}' -p 127.0.0.1:6062:6062 kanban-mcp:verify
+          trap 'docker logs kanban-mcp; docker rm -f kanban-mcp' EXIT
+          curl --retry 8 --retry-all-errors --retry-delay 1 --fail --silent --show-error http://127.0.0.1:6062/healthz
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST http://127.0.0.1:6062/mcp -H 'Content-Type: application/json' -d '{}')" = 401
+      - if: github.event_name == 'push'
+        run: docker save kanban-mcp:verify -o "$RUNNER_TEMP/kanban-mcp.tar"
+      - if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tested-mcp-image
+          path: ${{ runner.temp }}/kanban-mcp.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push'
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tested-mcp-image
+          path: ${{ runner.temp }}
+      - name: Publish image to GHCR and pin Deployment digest
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+          docker load --input "$RUNNER_TEMP/kanban-mcp.tar"
+          docker tag kanban-mcp:verify "$IMAGE_MCP:$GITHUB_SHA"
+          docker push "$IMAGE_MCP:$GITHUB_SHA"
+          DIGEST_MCP="$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE_MCP:$GITHUB_SHA")"
+          echo "$DIGEST_MCP" >> "$GITHUB_STEP_SUMMARY"
+          if ! printf '%s' "$DIGEST_MCP" | grep -Eq '^ghcr\.io/reisguilherme/homelab-kanban-mcp@sha256:[0-9a-f]{64}$'; then
+            echo "Unexpected MCP RepoDigest: $DIGEST_MCP" >&2
+            exit 1
+          fi
+
+          node -e '
+            const fs = require("node:fs");
+            const [digestMcp] = process.argv.slice(1);
+            const mcpFile = "kubernetes/kanban-mcp.yaml";
+            const mcpSrc = fs.readFileSync(mcpFile, "utf8").replace(
+              /^(\s*image:\s*)ghcr\.io\/reisguilherme\/homelab-kanban-mcp@sha256:[0-9a-f]{64}(\s*)$/m,
+              `$1${digestMcp}$2`
+            );
+            if (!mcpSrc.includes(digestMcp)) process.exit(1);
+            fs.writeFileSync(mcpFile, mcpSrc);
+          ' "$DIGEST_MCP"
+
+          if git diff --quiet kubernetes/kanban-mcp.yaml; then
+            echo "Deployment already pinned"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add kubernetes/kanban-mcp.yaml
+          git commit -m "chore(k8s): pin published digest for ${GITHUB_SHA:0:7} [skip ci]"
+          git pull --rebase origin main
+          git push origin main

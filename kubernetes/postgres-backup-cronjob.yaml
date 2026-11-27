@@ -1,0 +1,90 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kanban-postgres-backup
+  namespace: spoke-kanban
+spec:
+  schedule: "15 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: kanban-postgres-backup
+            app.kubernetes.io/part-of: spoke-kanban
+        spec:
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          restartPolicy: OnFailure
+          nodeSelector:
+            homelab.greis.dev.br/tier: auxiliary
+          tolerations:
+            - key: homelab.greis.dev.br/tier
+              operator: Equal
+              value: auxiliary
+              effect: NoSchedule
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            fsGroup: 70
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: kanban-postgres-backups
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+          containers:
+            - name: pg-dump
+              image: postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
+              env:
+                - name: PGHOST
+                  value: kanban-postgres
+                - name: PGPORT
+                  value: "5432"
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: kanban-secrets
+                      key: POSTGRES_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: kanban-secrets
+                      key: POSTGRES_PASSWORD
+                - name: PGDATABASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: kanban-secrets
+                      key: POSTGRES_DB
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+                  pg_dump -Fc -f "/backups/kanban-${STAMP}.dump"
+                  find /backups -name 'kanban-*.dump' -mtime +14 -delete
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 64Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi

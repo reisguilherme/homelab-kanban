@@ -1,0 +1,43 @@
+# Secrets & local runtime
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.dec.yaml
+*.dec.yml
+*.dec.json
+*.key
+*.pem
+*.crt
+*.agekey
+age.key
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# IaC & tooling state
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Only encrypted secrets, their index and instructions belong in Git
+/secrets/*
+!/secrets/*.sops.yaml
+!/secrets/*.example.yaml
+!/secrets/kustomization.yaml
+!/secrets/README.md
+.private-vault/
+
+# Forbidden scratch/clutter directories
+.artifacts/
+.runtime/
+.worktrees/
+backup/
+graphify-out/
+*.tar
+*.tar.gz
+*.zip

@@ -1,0 +1,11 @@
+{
+  "name": "@kanban/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "fastify": "^5.7.4",
+    "zod": "^4.6.6"
+  }
+}

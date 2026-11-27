@@ -1,0 +1,22 @@
+{
+  "name": "homelab-kanban",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "workspaces": [
+    "apps/mcp"
+  ],
+  "scripts": {
+    "start": "node apps/mcp/src/main.mjs",
+    "test": "node --test apps/mcp/test/*.test.mjs",
+    "validate": "node scripts/validate.mjs",
+    "dev:up": "node scripts/dev-stack.mjs up",
+    "dev:down": "node scripts/dev-stack.mjs down",
+    "dev:logs": "node scripts/dev-stack.mjs logs",
+    "dev:status": "node scripts/dev-stack.mjs status",
+    "dev:mcp": "node scripts/dev-stack.mjs mcp"
+  }
+}

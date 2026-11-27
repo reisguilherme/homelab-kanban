@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kaneo}
+      POSTGRES_USER: ${POSTGRES_USER:-kaneo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kaneo-dev-pass}
+    volumes:
+      - kaneo-pg-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kaneo} -d ${POSTGRES_DB:-kaneo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  kaneo:
+    image: ghcr.io/usekaneo/kaneo:2.50.0@sha256:03ad082e33945b9c091266af60c7c88865cb2fab37ff33d91cbbcab626b0094d
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KANEO_CLIENT_URL: ${KANEO_CLIENT_URL:-http://127.0.0.1:5173}
+      KANEO_CLOUD: "false"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-kaneo}
+      POSTGRES_USER: ${POSTGRES_USER:-kaneo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kaneo-dev-pass}
+      AUTH_SECRET: ${AUTH_SECRET:-dev-only-override-via-scripts-dev-stack}
+    ports:
+      - "127.0.0.1:5173:5173"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-Y", "off", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5173/api/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  kanban-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: homelab-kanban-mcp:local
+    depends_on:
+      kaneo:
+        condition: service_healthy
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "6062"
+      KANEO_API_URL: http://kaneo:5173/api
+      KANEO_API_KEY: ${KANEO_API_KEY:-}
+      KANBAN_MCP_TOKENS_JSON: ${KANBAN_MCP_TOKENS_JSON:-{}}
+    ports:
+      - "127.0.0.1:6062:6062"
+    read_only: true
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:6062/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  kaneo-pg-data:
