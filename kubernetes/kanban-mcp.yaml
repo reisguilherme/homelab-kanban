@@ -36,7 +36,7 @@ spec:
             sizeLimit: 32Mi
       containers:
         - name: kanban-mcp
-          image: ghcr.io/reisguilherme/homelab-kanban-mcp@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          image: ghcr.io/reisguilherme/homelab-kanban-mcp@sha256:3fa0f17cd349c099ac9dbda897b464f4dbdf08bdd10078fcd5f2c47f61d4ad8f
           ports:
             - name: mcp
               containerPort: 6062
